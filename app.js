@@ -176,16 +176,6 @@ function updateStats() {
   
   el.statYearKwh.textContent = totalKwh.toFixed(1).replace('.', ',') + ' kWh';
   el.statYearEuro.textContent = totalEuro.toFixed(2).replace('.', ',') + ' €';
-
-  // Animate bars (Gleb style micro-interaction)
-  const maxKwh = 5000;
-  const maxEuro = 1500;
-  
-  const kwhBar = document.getElementById('stat-bar-kwh');
-  const euroBar = document.getElementById('stat-bar-euro');
-  
-  if (kwhBar) kwhBar.style.width = Math.min(100, (totalKwh / maxKwh) * 100) + '%';
-  if (euroBar) euroBar.style.width = Math.min(100, (totalEuro / maxEuro) * 100) + '%';
 }
 
 function openHistory() {
