@@ -390,17 +390,95 @@ async function capturePhoto() {
 }
 
 // =============================================
-//  OCR
+//  OCR – Optimiert für 7-Segment LCD-Displays
 // =============================================
+
+/**
+ * Vorverarbeitung des Bildes für digitale Zähleranzeigen:
+ * 1. Zuschnitt auf den mittleren Bereich (wo die Zahlen sitzen)
+ * 2. Umwandlung in Graustufen
+ * 3. Kontrastverstärkung (Histogramm-Stretching)
+ * 4. Adaptiver Schwellenwert → Schwarz/Weiß-Bild
+ */
+function preprocessForSegmentDisplay(imgDataUrl) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const srcW = img.width;
+      const srcH = img.height;
+
+      // Crop: focus on center 80% width, middle 60% height
+      const cropX = Math.round(srcW * 0.10);
+      const cropY = Math.round(srcH * 0.20);
+      const cropW = Math.round(srcW * 0.80);
+      const cropH = Math.round(srcH * 0.60);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = cropW;
+      canvas.height = cropH;
+      const ctx = canvas.getContext('2d');
+
+      // Draw cropped region
+      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      // Get pixel data
+      const imageData = ctx.getImageData(0, 0, cropW, cropH);
+      const data = imageData.data;
+
+      // Step 1: Convert to grayscale & find min/max for contrast stretching
+      let min = 255, max = 0;
+      const gray = new Uint8Array(cropW * cropH);
+      for (let i = 0; i < data.length; i += 4) {
+        const g = Math.round(data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+        gray[i / 4] = g;
+        if (g < min) min = g;
+        if (g > max) max = g;
+      }
+
+      // Step 2: Contrast stretch + threshold
+      const range = max - min || 1;
+      const threshold = min + range * 0.45; // slightly below midpoint for LCD segments
+
+      for (let i = 0; i < gray.length; i++) {
+        // Stretch contrast
+        const stretched = ((gray[i] - min) / range) * 255;
+        // Binary threshold: segment digits are darker than background
+        const val = stretched < (threshold - min) / range * 255 ? 0 : 255;
+        const pi = i * 4;
+        data[pi] = data[pi+1] = data[pi+2] = val;
+        data[pi+3] = 255;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      // Step 3: Scale up 2x for better Tesseract recognition
+      const upCanvas = document.createElement('canvas');
+      upCanvas.width = cropW * 2;
+      upCanvas.height = cropH * 2;
+      const upCtx = upCanvas.getContext('2d');
+      upCtx.imageSmoothingEnabled = false;
+      upCtx.drawImage(canvas, 0, 0, cropW * 2, cropH * 2);
+
+      resolve(upCanvas.toDataURL('image/png'));
+    };
+    img.src = imgDataUrl;
+  });
+}
+
 async function runOCR(img) {
   try {
-    const res = await Tesseract.recognize(img, 'eng', {
+    // Preprocess image for 7-segment digital display
+    const processed = await preprocessForSegmentDisplay(img);
+
+    const res = await Tesseract.recognize(processed, 'eng', {
+      tessedit_char_whitelist: '0123456789.',
+      tessedit_pageseg_mode: '7',  // Single text line
       logger: m => {
         if (m.status === 'recognizing text')
           el.ocrStatus.textContent = `Erkenne… ${Math.round(m.progress * 100)}%`;
       }
     });
-    const text    = res.data.text.replace(/,/g, '.').replace(/[Oo]/g, '0');
+    const text    = res.data.text.replace(/,/g, '.').replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[Bb]/g, '8').replace(/[Il|]/g, '1');
     const matches = [...text.matchAll(/\d{3,6}(\.\d{1,3})?/g)];
     if (matches.length > 0) {
       const best = matches.reduce((a, b) => a[0].length >= b[0].length ? a : b);
