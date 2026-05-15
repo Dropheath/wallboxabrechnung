@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Wallbox Abrechnung</title>
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#080c14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Wallbox">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-dots"></div>
+  <div id="fx-layer"></div>
+  <div id="app">
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-text">
+          <span class="brand-name">Wallbox</span>
+          <span class="brand-sub">Ladekosten-App</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="header-date" id="header-date"></div>
+        <button id="settings-btn" class="icon-btn" aria-label="Einstellungen">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Reminder Banner -->
+    <div class="reminder-banner hidden" id="reminder-banner">
+      <div class="reminder-pulse-ring"></div>
+      <span class="reminder-icon">🔔</span>
+      <div class="reminder-content">
+        <strong>Abrechnung fällig!</strong>
+        <span>Es ist nach dem 23. – jetzt scannen</span>
+      </div>
+    </div>
+
+    <!-- Status Chips -->
+    <div class="status-row">
+      <div class="status-chip">
+        <span class="chip-icon">📡</span>
+        <div class="chip-content">
+          <span class="chip-label">Letzter Stand</span>
+          <span class="chip-value" id="last-reading-display">– kWh</span>
+        </div>
+      </div>
+      <div class="status-chip">
+        <span class="chip-icon">💡</span>
+        <div class="chip-content">
+          <span class="chip-label">Strompreis</span>
+          <span class="chip-value" id="price-display">– €/kWh</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Camera / Scan Section -->
+    <section class="scan-section">
+
+      <!-- Live Camera View -->
+      <div id="camera-container" class="camera-wrapper">
+        <video id="camera-preview" autoplay playsinline></video>
+
+        <div class="scan-overlay">
+          <p class="scan-hint">Zähleranzeige hier einrahmen</p>
+          <div class="scan-frame">
+            <span class="corner tl"></span>
+            <span class="corner tr"></span>
+            <span class="corner bl"></span>
+            <span class="corner br"></span>
+            <div class="scan-laser"></div>
+          </div>
+        </div>
+
+        <button id="capture-btn" class="shutter-btn" aria-label="Foto aufnehmen">
+          <span class="shutter-ring"></span>
+          <span class="shutter-core"></span>
+        </button>
+      </div>
+
+      <!-- Preview + OCR Result -->
+      <div id="preview-container" class="preview-wrapper hidden">
+        <div class="proof-image-wrap">
+          <img id="image-preview" alt="Aufgenommenes Zählerfoto">
+          <div class="ocr-badge" id="ocr-overlay">
+            <span class="ocr-spinner"></span>
+            <span id="ocr-status">Erkenne Zählerstand…</span>
+          </div>
+        </div>
+
+        <div class="reading-card">
+          <label class="reading-label">Erkannter Zählerstand</label>
+          <div class="reading-input-row">
+            <input
+              type="number"
+              id="reading-input"
+              class="reading-input"
+              step="0.1"
+              placeholder="0000.0"
+              inputmode="decimal"
+              autocomplete="off"
+            >
+            <span class="reading-unit">kWh</span>
+          </div>
+          <p class="reading-hint">Bitte prüfen – bei Bedarf direkt tippen zum Korrigieren</p>
+        </div>
+
+        <button id="retake-btn" class="btn-ghost">↺ &nbsp;Neues Foto aufnehmen</button>
+      </div>
+
+    </section>
+
+    <!-- Calculation Panel (appears after OCR) -->
+    <section class="calc-panel hidden" id="calculation-section">
+      <div class="calc-grid">
+        <div class="calc-item">
+          <span class="calc-label">Alt</span>
+          <span class="calc-num" id="old-reading-display">–</span>
+          <span class="calc-unit">kWh</span>
+        </div>
+        <div class="calc-arrow">→</div>
+        <div class="calc-item">
+          <span class="calc-label">Neu</span>
+          <span class="calc-num accent" id="new-reading-display">–</span>
+          <span class="calc-unit">kWh</span>
+        </div>
+      </div>
+
+      <div class="calc-total-card">
+        <div class="total-row">
+          <div class="total-meta">
+            <span class="total-label">Verbrauch</span>
+            <span class="total-consumption" id="consumption-display">– kWh</span>
+          </div>
+          <div class="total-amount-wrap">
+            <span class="total-label">Betrag</span>
+            <span class="total-amount" id="total-display">–,– €</span>
+          </div>
+        </div>
+        <p class="total-detail" id="calc-detail-text"></p>
+      </div>
+    </section>
+
+    <!-- Action Bar -->
+    <div class="action-bar" id="action-bar">
+      <button id="save-btn" class="btn-primary" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+        Speichern & Bestätigen
+      </button>
+      <div class="btn-row">
+        <button id="generate-pdf-btn" class="btn-secondary" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+          PDF & Mail
+        </button>
+        <button id="export-csv-btn" class="btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Verlauf CSV
+        </button>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast hidden" id="toast"></div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Einstellungen</h2>
+          <button id="close-settings-btn" class="icon-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="setting-price">Strompreis (€/kWh)</label>
+            <input type="number" id="setting-price" step="0.0001" inputmode="decimal">
+          </div>
+          <div class="form-group">
+            <label for="setting-day">Abrechnungstag (Turnus)</label>
+            <input type="number" id="setting-day" min="1" max="31" placeholder="z.B. 23">
+            <small>An diesem Tag im Monat erscheint die Erinnerung.</small>
+          </div>
+          <div class="form-group">
+            <label for="setting-email">E-Mail Empfänger</label>
+            <input type="email" id="setting-email" placeholder="buchhaltung@firma.de">
+          </div>
+
+          <div class="settings-section-title">Absender (Meine Daten)</div>
+          <div class="form-group">
+            <label for="setting-sender-name">Vollständiger Name</label>
+            <input type="text" id="setting-sender-name" placeholder="Max Mustermann">
+          </div>
+          <div class="form-group">
+            <label for="setting-sender-street">Straße &amp; Hausnummer</label>
+            <input type="text" id="setting-sender-street" placeholder="Musterstraße 1">
+          </div>
+          <div class="form-group">
+            <label for="setting-sender-city">PLZ &amp; Ort</label>
+            <input type="text" id="setting-sender-city" placeholder="12345 Musterstadt">
+          </div>
+
+          <div class="settings-section-title">Empfänger (Firma)</div>
+          <div class="form-group">
+            <label for="setting-recipient-company">Firmenname</label>
+            <input type="text" id="setting-recipient-company" placeholder="Firma GmbH">
+          </div>
+          <div class="form-group">
+            <label for="setting-recipient-person">z.Hd. (Ansprechpartner)</label>
+            <input type="text" id="setting-recipient-person" placeholder="Max Mustermann">
+          </div>
+          <div class="form-group">
+            <label for="setting-recipient-street">Straße &amp; Hausnummer</label>
+            <input type="text" id="setting-recipient-street" placeholder="Firmenstraße 1">
+          </div>
+          <div class="form-group">
+            <label for="setting-recipient-city">PLZ &amp; Ort</label>
+            <input type="text" id="setting-recipient-city" placeholder="12345 Firmenstadt">
+          </div>
+
+          <div class="settings-section-title">Optionen</div>
+          <div class="form-group">
+            <label for="setting-theme">Erscheinungsbild (Thema)</label>
+            <select id="setting-theme" style="background: var(--bg-card); color: var(--text-1); border: 1px solid var(--border); padding: 12px; border-radius: var(--r-sm); font-family: var(--font); outline: none;">
+              <option value="dark">Standard (Dark Mode)</option>
+              <option value="light">Hell (Light Mode)</option>
+              <option value="highvoltage">High Voltage (Effekte)</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex-direction: row; align-items: center; gap: 8px; margin-top: 5px;">
+            <input type="checkbox" id="setting-signature" style="width: 20px; height: 20px; accent-color: var(--accent);">
+            <label for="setting-signature" style="margin: 0; font-size: 0.9rem;">Unterschriftsfeld im PDF anzeigen</label>
+          </div>
+
+          <button id="save-settings-btn" class="btn-primary" style="margin-top: 15px;">Einstellungen speichern</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
