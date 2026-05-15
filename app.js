@@ -66,6 +66,16 @@ const el = {
   settingRecipCity:     document.getElementById('setting-recipient-city'),
   settingSignature:     document.getElementById('setting-signature'),
   settingTheme:         document.getElementById('setting-theme'),
+  historyBtn:           document.getElementById('history-btn'),
+  historyModal:         document.getElementById('history-modal'),
+  closeHistoryBtn:      document.getElementById('close-history-btn'),
+  historyList:          document.getElementById('history-list'),
+  deleteLastBtn:        document.getElementById('delete-last-btn'),
+  statYearKwh:          document.getElementById('stat-year-kwh'),
+  statYearEuro:         document.getElementById('stat-year-euro'),
+  exportBackupBtn:      document.getElementById('export-backup-btn'),
+  importBackupBtn:      document.getElementById('import-backup-btn'),
+  importFileInput:      document.getElementById('import-file-input'),
 };
 
 // =============================================
@@ -79,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkReminder();
   loadLocalReading();
   updatePriceDisplay();
+  updateStats();
 
   el.captureBtn.addEventListener('click', capturePhoto);
   el.retakeBtn.addEventListener('click', startCamera);
@@ -89,6 +100,12 @@ document.addEventListener('DOMContentLoaded', () => {
   el.settingsBtn.addEventListener('click', openSettings);
   el.closeSettingsBtn.addEventListener('click', closeSettings);
   el.saveSettingsBtn.addEventListener('click', saveSettings);
+  el.historyBtn.addEventListener('click', openHistory);
+  el.closeHistoryBtn.addEventListener('click', closeHistory);
+  el.deleteLastBtn.addEventListener('click', deleteLastEntry);
+  el.exportBackupBtn.addEventListener('click', exportBackup);
+  el.importBackupBtn.addEventListener('click', () => el.importFileInput.click());
+  el.importFileInput.addEventListener('change', importBackup);
 
   startCamera();
 });
@@ -139,14 +156,145 @@ function saveSettings() {
   closeSettings();
   applyTheme();
   updatePriceDisplay();
+  updateStats();
   checkReminder();
   if (!el.calcSection.classList.contains('hidden') && !state.saved) onReadingInput();
   showToast('Einstellungen gespeichert', 'success');
 }
 
 // =============================================
-//  HELPERS
+//  HELPERS & DASHBOARD
 // =============================================
+function updateStats() {
+  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  
+  const yearEntries = history.filter(r => new Date(r.isoDate).getFullYear() === currentYear);
+  const totalKwh = yearEntries.reduce((sum, r) => sum + r.consumption, 0);
+  const totalEuro = yearEntries.reduce((sum, r) => sum + r.total, 0);
+  
+  el.statYearKwh.textContent = totalKwh.toFixed(1).replace('.', ',') + ' kWh';
+  el.statYearEuro.textContent = totalEuro.toFixed(2).replace('.', ',') + ' €';
+
+  // Animate bars (Gleb style micro-interaction)
+  const maxKwh = 5000;
+  const maxEuro = 1500;
+  
+  const kwhBar = document.getElementById('stat-bar-kwh');
+  const euroBar = document.getElementById('stat-bar-euro');
+  
+  if (kwhBar) kwhBar.style.width = Math.min(100, (totalKwh / maxKwh) * 100) + '%';
+  if (euroBar) euroBar.style.width = Math.min(100, (totalEuro / maxEuro) * 100) + '%';
+}
+
+function openHistory() {
+  renderHistory();
+  el.historyModal.classList.remove('hidden');
+}
+
+function closeHistory() {
+  el.historyModal.classList.add('hidden');
+}
+
+function renderHistory() {
+  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  if (history.length === 0) {
+    el.historyList.innerHTML = '<p style="text-align:center; color:var(--text-3); padding:20px;">Noch keine Einträge vorhanden.</p>';
+    el.deleteLastBtn.style.display = 'none';
+    return;
+  }
+  
+  el.deleteLastBtn.style.display = 'block';
+  el.historyList.innerHTML = history.slice().reverse().map((r, idx) => {
+    const realIdx = history.length - 1 - idx;
+    return `
+      <div class="history-item">
+        <div class="history-info">
+          <span class="history-date">${r.date}</span>
+          <span class="history-meta">${r.consumption.toFixed(1)} kWh à ${r.price.toFixed(4).replace('.',',')}€</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span class="history-amount">${r.total.toFixed(2).replace('.',',')} €</span>
+          <button class="icon-btn-sm" onclick="downloadPastPDF(${realIdx})" title="PDF laden">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function downloadPastPDF(idx) {
+  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  if (history[idx]) {
+    generateAndMailPDF(history[idx]);
+  }
+}
+
+function exportBackup() {
+  const data = {
+    history: JSON.parse(localStorage.getItem('wallbox_history') || '[]'),
+    settings: settings,
+    lastReading: localStorage.getItem('wallbox_last_reading'),
+    version: '1.0'
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), {
+    href: url,
+    download: `Wallbox_Backup_${new Date().toISOString().slice(0,10)}.json`
+  });
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Backup exportiert', 'success');
+}
+
+function importBackup(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const data = JSON.parse(event.target.result);
+      if (!data.history || !data.settings) throw new Error('Ungültiges Format');
+      
+      if (!confirm('Bestehende Daten werden überschrieben. Fortfahren?')) return;
+      
+      localStorage.setItem('wallbox_history', JSON.stringify(data.history));
+      localStorage.setItem('wallbox_settings', JSON.stringify(data.settings));
+      if (data.lastReading) localStorage.setItem('wallbox_last_reading', data.lastReading);
+      
+      showToast('Daten erfolgreich importiert!', 'success');
+      setTimeout(() => window.location.reload(), 1500);
+    } catch(err) {
+      showToast('Fehler beim Import: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function deleteLastEntry() {
+  if (!confirm('Letzten Eintrag wirklich unwiderruflich löschen?')) return;
+  
+  let history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  if (history.length === 0) return;
+  
+  history.pop();
+  localStorage.setItem('wallbox_history', JSON.stringify(history));
+  
+  // Update state for next scan
+  const lastReading = history.length > 0 ? history[history.length - 1].newReading : 0;
+  localStorage.setItem('wallbox_last_reading', String(lastReading));
+  state.lastReading = lastReading;
+  
+  loadLocalReading();
+  updateStats();
+  renderHistory();
+  showToast('Eintrag gelöscht', 'info');
+}
+
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
 }
@@ -342,6 +490,7 @@ function saveLocalReading() {
   state.saved = true;
   state.lastReading = current;
   el.lastReadingDisplay.textContent = fmtKwh(current);
+  updateStats();
   el.reminderBanner.classList.add('hidden');
   el.saveBtn.innerHTML = '✓ Gespeichert';
   el.saveBtn.style.background = '#0d3d26';
@@ -375,11 +524,11 @@ function exportCSV() {
 // =============================================
 //  PDF – Einseitig, Auto-Bildgröße
 // =============================================
-function generateAndMailPDF() {
+function generateAndMailPDF(customRec = null) {
   const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
-  if (!history.length) { showToast('Keine Daten für PDF vorhanden.', 'error'); return; }
+  if (!history.length && !customRec) { showToast('Keine Daten für PDF vorhanden.', 'error'); return; }
 
-  const rec  = history[history.length - 1];
+  const rec  = customRec || history[history.length - 1];
   const { jsPDF } = window.jspdf;
   const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
