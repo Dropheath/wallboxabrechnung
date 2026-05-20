@@ -96,7 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
   el.retakeBtn.addEventListener('click', startCamera);
   el.readingInput.addEventListener('input', onReadingInput);
   el.saveBtn.addEventListener('click', saveLocalReading);
-  el.pdfBtn.addEventListener('click', generateAndMailPDF);
+  el.pdfBtn.addEventListener('click', () => generateAndMailPDF());
   el.exportCsvBtn.addEventListener('click', exportCSV);
   el.settingsBtn.addEventListener('click', openSettings);
   el.closeSettingsBtn.addEventListener('click', closeSettings);
@@ -599,6 +599,7 @@ function exportCSV() {
 //  PDF – Einseitig, Auto-Bildgröße
 // =============================================
 function generateAndMailPDF(customRec = null) {
+  try {
   const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
   if (!history.length && !customRec) { showToast('Keine Daten für PDF vorhanden.', 'error'); return; }
 
@@ -836,4 +837,8 @@ function generateAndMailPDF(customRec = null) {
   }, 1200);
 
   showToast('PDF erstellt – Mail wird geöffnet…', 'success', 3500);
+  } catch(err) {
+    console.error('PDF-Fehler:', err);
+    showToast('PDF-Erzeugung fehlgeschlagen: ' + err.message, 'error', 5000);
+  }
 }
