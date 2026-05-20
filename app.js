@@ -90,6 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadLocalReading();
   updatePriceDisplay();
   updateStats();
+  updatePdfBtnState();
 
   el.captureBtn.addEventListener('click', capturePhoto);
   el.retakeBtn.addEventListener('click', startCamera);
@@ -165,6 +166,10 @@ function saveSettings() {
 // =============================================
 //  HELPERS & DASHBOARD
 // =============================================
+function updatePdfBtnState() {
+  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  el.pdfBtn.disabled = history.length === 0;
+}
 function updateStats() {
   const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
   const now = new Date();
@@ -281,6 +286,7 @@ function deleteLastEntry() {
   
   loadLocalReading();
   updateStats();
+  updatePdfBtnState();
   renderHistory();
   showToast('Eintrag gelöscht', 'info');
 }
@@ -354,7 +360,7 @@ async function startCamera() {
   el.cameraContainer.classList.remove('hidden');
   el.calcSection.classList.add('hidden');
   el.saveBtn.disabled = true;
-  el.pdfBtn.disabled  = true;
+  updatePdfBtnState();
   el.saveBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg> Speichern & Bestätigen`;
   el.saveBtn.style.cssText = '';
 
@@ -564,7 +570,7 @@ function saveLocalReading() {
   el.saveBtn.style.background = '#0d3d26';
   el.saveBtn.style.color = 'var(--accent)';
   el.saveBtn.disabled = true;
-  el.pdfBtn.disabled  = false;
+  updatePdfBtnState();
   vibrate([30, 50, 80]);
   showToast('Zählerstand gespeichert!', 'success');
 }
