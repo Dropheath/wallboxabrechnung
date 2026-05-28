@@ -13,6 +13,7 @@ let settings = {
   turnusDay:          23,
   email:              '',
   emailCc:            '',
+  emailName:          '',
   senderName:         'Joannis Nastas',
   senderStreet:       'Birkenstraße 2',
   senderCity:         '67590 Monsheim',
@@ -59,6 +60,7 @@ const el = {
   settingDay:           document.getElementById('setting-day'),
   settingEmail:         document.getElementById('setting-email'),
   settingEmailCc:       document.getElementById('setting-email-cc'),
+  settingEmailName:     document.getElementById('setting-email-name'),
   settingSenderName:    document.getElementById('setting-sender-name'),
   settingSenderStreet:  document.getElementById('setting-sender-street'),
   settingSenderCity:    document.getElementById('setting-sender-city'),
@@ -126,6 +128,7 @@ function openSettings() {
   el.settingDay.value          = settings.turnusDay;
   el.settingEmail.value        = settings.email;
   el.settingEmailCc.value      = settings.emailCc || '';
+  el.settingEmailName.value    = settings.emailName || '';
   el.settingSenderName.value   = settings.senderName;
   el.settingSenderStreet.value = settings.senderStreet;
   el.settingSenderCity.value   = settings.senderCity;
@@ -147,6 +150,7 @@ function saveSettings() {
   settings.turnusDay        = parseInt(el.settingDay.value) || 23;
   settings.email            = el.settingEmail.value.trim();
   settings.emailCc          = el.settingEmailCc.value.trim();
+  settings.emailName        = el.settingEmailName.value.trim();
   settings.senderName       = el.settingSenderName.value.trim();
   settings.senderStreet     = el.settingSenderStreet.value.trim();
   settings.senderCity       = el.settingSenderCity.value.trim();
@@ -830,7 +834,7 @@ function generateAndMailPDF(customRec = null) {
     );
     const subject = encodeURIComponent(`Spesenabrechnung Wallbox – ${period}`);
     const body    = encodeURIComponent(
-      `Hallo${settings.recipientPerson ? ' ' + settings.recipientPerson : ''},\n\n` +
+      `Hallo${settings.emailName ? ' ' + settings.emailName : (settings.recipientPerson ? ' ' + settings.recipientPerson : '')},\n\n` +
       `anbei sende ich meine Wallbox-Spesenabrechnung für ${period}.\n\n` +
       `  Verbrauch:  ${rec.consumption.toFixed(1)} kWh\n` +
       `  Betrag:     ${rec.total.toFixed(2)} €\n\n` +
