@@ -2,11 +2,104 @@
 //  STATE & SETTINGS
 // =============================================
 let state = {
-  lastReading:    0,
-  currentReading: 0,
-  photoBase64:    null,
-  saved:          false,
+  currentReading: null,
+  photoData: null,
+  lastReading: 0,
+  saved: false
 };
+
+let tempSignatureImage = null;
+
+const db = {
+  dbName: 'WallboxDB',
+  storeName: 'store',
+  _db: null,
+  init() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, 1);
+      request.onupgradeneeded = (e) => {
+        const _db = e.target.result;
+        if (!_db.objectStoreNames.contains(this.storeName)) {
+          _db.createObjectStore(this.storeName);
+        }
+      };
+      request.onsuccess = (e) => {
+        this._db = e.target.result;
+        resolve();
+      };
+      request.onerror = (e) => reject(e.target.error);
+    });
+  },
+  get(key) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction(this.storeName, 'readonly');
+      const store = tx.objectStore(this.storeName);
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  },
+  set(key, value) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction(this.storeName, 'readwrite');
+      const store = tx.objectStore(this.storeName);
+      const req = store.put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+};
+
+const storage = {
+  history: [],
+  lastReading: 0,
+  lastBilledMonth: '',
+  
+  async loadFromDB() {
+    this.history = await db.get('wallbox_history') || [];
+    const settingsDB = await db.get('wallbox_settings');
+    if (settingsDB) {
+      settings = { ...settings, ...settingsDB };
+    }
+    this.lastReading = await db.get('wallbox_last_reading') || 0;
+    this.lastBilledMonth = await db.get('lastBilledMonth') || '';
+  },
+  
+  async saveHistory() {
+    await db.set('wallbox_history', this.history);
+  },
+  
+  async saveSettings() {
+    await db.set('wallbox_settings', settings);
+  },
+  
+  async saveLastReading() {
+    await db.set('wallbox_last_reading', this.lastReading);
+  },
+  
+  async saveLastBilledMonth() {
+    await db.set('lastBilledMonth', this.lastBilledMonth);
+  }
+};
+
+async function migrateIfNeeded() {
+  const lsHistory = localStorage.getItem('wallbox_history');
+  if (lsHistory) {
+    console.log("Migrating from localStorage to IndexedDB...");
+    await db.set('wallbox_history', JSON.parse(lsHistory));
+    const lsSettings = localStorage.getItem('wallbox_settings');
+    if (lsSettings) await db.set('wallbox_settings', JSON.parse(lsSettings));
+    const lsLast = localStorage.getItem('wallbox_last_reading');
+    if (lsLast) await db.set('wallbox_last_reading', lsLast);
+    const lsBilled = localStorage.getItem('lastBilledMonth');
+    if (lsBilled) await db.set('lastBilledMonth', lsBilled);
+
+    localStorage.removeItem('wallbox_history');
+    localStorage.removeItem('wallbox_settings');
+    localStorage.removeItem('wallbox_last_reading');
+    localStorage.removeItem('lastBilledMonth');
+  }
+}
 
 let settings = {
   price:              0.30,
@@ -69,6 +162,10 @@ const el = {
   settingRecipStreet:   document.getElementById('setting-recipient-street'),
   settingRecipCity:     document.getElementById('setting-recipient-city'),
   settingSignature:     document.getElementById('setting-signature'),
+  settingSignatureImage: document.getElementById('setting-signature-image'),
+  signaturePreview:      document.getElementById('signature-preview'),
+  signaturePreviewContainer: document.getElementById('signature-preview-container'),
+  removeSignatureBtn:    document.getElementById('remove-signature-btn'),
   settingTheme:         document.getElementById('setting-theme'),
   historyBtn:           document.getElementById('history-btn'),
   historyModal:         document.getElementById('history-modal'),
@@ -81,14 +178,21 @@ const el = {
   exportBackupBtn:      document.getElementById('export-backup-btn'),
   importBackupBtn:      document.getElementById('import-backup-btn'),
   importFileInput:      document.getElementById('import-file-input'),
+  backupCloudBtn:       document.getElementById('backup-cloud-btn'),
+  closeBackupBtn:       document.getElementById('close-backup-btn'),
+  backupModal:          document.getElementById('backup-modal'),
 };
 
 // =============================================
 //  INIT
 // =============================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   registerServiceWorker();
-  loadSettings();
+  
+  await db.init();
+  await migrateIfNeeded();
+  await storage.loadFromDB();
+  
   applyTheme();
   setHeaderDate();
   checkReminder();
@@ -109,9 +213,19 @@ document.addEventListener('DOMContentLoaded', () => {
   el.historyBtn.addEventListener('click', openHistory);
   el.closeHistoryBtn.addEventListener('click', closeHistory);
   el.deleteLastBtn.addEventListener('click', deleteLastEntry);
-  el.exportBackupBtn.addEventListener('click', exportBackup);
+  el.exportBackupBtn.addEventListener('click', exportDataToJSON);
   el.importBackupBtn.addEventListener('click', () => el.importFileInput.click());
-  el.importFileInput.addEventListener('change', importBackup);
+  el.importFileInput.addEventListener('change', importDataFromJSON);
+  
+  if (el.backupCloudBtn) el.backupCloudBtn.addEventListener('click', exportDataToJSON);
+  if (el.closeBackupBtn) el.closeBackupBtn.addEventListener('click', () => el.backupModal.classList.add('hidden'));
+  
+  if (el.settingSignatureImage) {
+    el.settingSignatureImage.addEventListener('change', handleSignatureUpload);
+  }
+  if (el.removeSignatureBtn) {
+    el.removeSignatureBtn.addEventListener('click', removeSignature);
+  }
 
   startCamera();
 });
@@ -119,9 +233,25 @@ document.addEventListener('DOMContentLoaded', () => {
 // =============================================
 //  SETTINGS
 // =============================================
-function loadSettings() {
-  const saved = localStorage.getItem('wallbox_settings');
-  if (saved) settings = { ...settings, ...JSON.parse(saved) };
+
+function handleSignatureUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    tempSignatureImage = event.target.result;
+    el.signaturePreview.src = tempSignatureImage;
+    el.signaturePreviewContainer.style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeSignature(e) {
+  e.preventDefault();
+  tempSignatureImage = null;
+  el.settingSignatureImage.value = '';
+  el.signaturePreview.src = '';
+  el.signaturePreviewContainer.style.display = 'none';
 }
 
 function openSettings() {
@@ -138,6 +268,17 @@ function openSettings() {
   el.settingRecipStreet.value  = settings.recipientStreet;
   el.settingRecipCity.value    = settings.recipientCity;
   el.settingSignature.checked  = settings.signature;
+  
+  tempSignatureImage = settings.signatureImage || null;
+  if (tempSignatureImage) {
+    el.signaturePreview.src = tempSignatureImage;
+    el.signaturePreviewContainer.style.display = 'block';
+  } else {
+    el.signaturePreview.src = '';
+    el.signaturePreviewContainer.style.display = 'none';
+  }
+  el.settingSignatureImage.value = '';
+  
   el.settingTheme.value        = settings.theme || 'dark';
   el.settingsModal.classList.remove('hidden');
 }
@@ -160,9 +301,10 @@ function saveSettings() {
   settings.recipientStreet  = el.settingRecipStreet.value.trim();
   settings.recipientCity    = el.settingRecipCity.value.trim();
   settings.signature        = el.settingSignature.checked;
+  settings.signatureImage   = tempSignatureImage;
   settings.theme            = el.settingTheme.value;
 
-  localStorage.setItem('wallbox_settings', JSON.stringify(settings));
+  storage.saveSettings();
   closeSettings();
   applyTheme();
   updatePriceDisplay();
@@ -176,11 +318,11 @@ function saveSettings() {
 //  HELPERS & DASHBOARD
 // =============================================
 function updatePdfBtnState() {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   el.pdfBtn.disabled = history.length === 0;
 }
 function updateStats() {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   const now = new Date();
   const currentYear = now.getFullYear();
   
@@ -204,7 +346,7 @@ function closeHistory() {
 }
 
 function renderHistory() {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   
   // Update subtitle
   if (el.historySubtitle) {
@@ -270,7 +412,7 @@ function renderHistory() {
 }
 
 function downloadPastPDF(idx) {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   if (history[idx]) {
     generateAndMailPDF(history[idx]);
   }
@@ -301,7 +443,7 @@ function deleteLastEntry() {
 
 // Silent CSV export: auto-downloads updated CSV without toast (called after delete)
 function silentExportCSV() {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   if (!history.length) return;
   const header = 'Datum;Zaehler Alt (kWh);Zaehler Neu (kWh);Verbrauch (kWh);Preis/kWh (EUR);Summe (EUR)\n';
   const rows   = history.map(r =>
@@ -316,39 +458,71 @@ function silentExportCSV() {
   URL.revokeObjectURL(a.href);
 }
 
-function exportBackup() {
+async function exportDataToJSON() {
   const data = {
-    history: JSON.parse(localStorage.getItem('wallbox_history') || '[]'),
+    history: storage.history,
     settings: settings,
-    lastReading: localStorage.getItem('wallbox_last_reading'),
+    lastReading: storage.lastReading,
     version: '1.0'
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const filename = `Wallbox_Backup_${new Date().toISOString().slice(0,10)}.json`;
+
+  if (navigator.share && navigator.canShare) {
+    const file = new File([blob], filename, { type: 'application/json' });
+    if (navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: 'Wallbox Backup',
+          text: 'Mein Wallbox Abrechnungs-Backup'
+        });
+        showToast('Backup erfolgreich geteilt', 'success');
+        return;
+      } catch (err) {
+        console.log('Teilen abgebrochen oder fehlgeschlagen:', err);
+        if (err.name !== 'AbortError') {
+           downloadBlob(blob, filename);
+        }
+      }
+    } else {
+      downloadBlob(blob, filename);
+    }
+  } else {
+    downloadBlob(blob, filename);
+  }
+}
+
+function downloadBlob(blob, filename) {
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), {
     href: url,
-    download: `Wallbox_Backup_${new Date().toISOString().slice(0,10)}.json`
+    download: filename
   });
   a.click();
   URL.revokeObjectURL(url);
   showToast('Backup exportiert', 'success');
 }
 
-function importBackup(e) {
+async function importDataFromJSON(e) {
   const file = e.target.files[0];
   if (!file) return;
   
   const reader = new FileReader();
-  reader.onload = (event) => {
+  reader.onload = async (event) => {
     try {
       const data = JSON.parse(event.target.result);
       if (!data.history || !data.settings) throw new Error('Ungültiges Format');
       
       if (!confirm('Bestehende Daten werden überschrieben. Fortfahren?')) return;
       
-      localStorage.setItem('wallbox_history', JSON.stringify(data.history));
-      localStorage.setItem('wallbox_settings', JSON.stringify(data.settings));
-      if (data.lastReading) localStorage.setItem('wallbox_last_reading', data.lastReading);
+      storage.history = data.history;
+      settings = { ...settings, ...data.settings };
+      if (data.lastReading) storage.lastReading = data.lastReading;
+      
+      await storage.saveHistory();
+      await storage.saveSettings();
+      await storage.saveLastReading();
       
       showToast('Daten erfolgreich importiert!', 'success');
       setTimeout(() => window.location.reload(), 1500);
@@ -414,7 +588,7 @@ function updatePriceDisplay() {
 function checkReminder() {
   const today = new Date();
   const key   = `${today.getFullYear()}-${today.getMonth() + 1}`;
-  const billed = localStorage.getItem('lastBilledMonth');
+  const billed = storage.lastBilledMonth;
   if (today.getDate() >= settings.turnusDay && billed !== key)
     el.reminderBanner.classList.remove('hidden');
   else
@@ -422,8 +596,8 @@ function checkReminder() {
 }
 
 function loadLocalReading() {
-  const s = localStorage.getItem('wallbox_last_reading');
-  if (s !== null) {
+  const s = storage.lastReading;
+  if (s !== null && s !== undefined && s !== 0 && s !== "0") {
     state.lastReading = parseFloat(s);
     el.lastReadingDisplay.textContent = fmt(state.lastReading) + ' kWh';
   } else {
@@ -635,7 +809,7 @@ function saveLocalReading() {
   const total   = diff * settings.price;
   const today   = new Date();
 
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   history.push({
     date:        today.toLocaleDateString('de-DE'),
     isoDate:     today.toISOString(),
@@ -646,9 +820,12 @@ function saveLocalReading() {
     total:       total,
     photo:       state.photoBase64,
   });
-  localStorage.setItem('wallbox_history', JSON.stringify(history));
-  localStorage.setItem('wallbox_last_reading', String(current));
-  localStorage.setItem('lastBilledMonth', `${today.getFullYear()}-${today.getMonth() + 1}`);
+  
+  storage.saveHistory();
+  storage.lastReading = String(current);
+  storage.saveLastReading();
+  storage.lastBilledMonth = `${today.getFullYear()}-${today.getMonth() + 1}`;
+  storage.saveLastBilledMonth();
 
   state.saved = true;
   state.lastReading = current;
@@ -668,7 +845,7 @@ function saveLocalReading() {
 //  CSV EXPORT
 // =============================================
 function exportCSV() {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   if (!history.length) { showToast('Noch keine Einträge vorhanden.', 'error'); return; }
   const header = 'Datum;Zaehler Alt (kWh);Zaehler Neu (kWh);Verbrauch (kWh);Preis/kWh (EUR);Summe (EUR)\n';
   const rows   = history.map(r =>
@@ -689,7 +866,7 @@ function exportCSV() {
 // =============================================
 function generateAndMailPDF(customRec = null) {
   try {
-  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  const history = storage.history;
   if (!history.length && !customRec) { showToast('Keine Daten für PDF vorhanden.', 'error'); return; }
 
   const rec  = customRec || history[history.length - 1];
@@ -834,6 +1011,26 @@ function generateAndMailPDF(customRec = null) {
     doc.setDrawColor(...C_MID);
     doc.setLineWidth(0.3);
     const sigW = 60;
+    
+    if (settings.signatureImage) {
+      try {
+        const imgProps = doc.getImageProperties(settings.signatureImage);
+        const ratio = imgProps.width / imgProps.height;
+        let imgW = sigW;
+        let imgH = imgW / ratio;
+        if (imgH > 25) { 
+          imgH = 25;
+          imgW = imgH * ratio;
+        }
+        // Versuche das Format aus dem Data-URL Header abzuleiten, fallback auf PNG
+        let format = 'PNG';
+        if (settings.signatureImage.startsWith('data:image/jpeg')) format = 'JPEG';
+        doc.addImage(settings.signatureImage, format, ML + (sigW - imgW)/2, y - imgH - 2, imgW, imgH);
+      } catch (e) {
+        console.warn('Fehler beim Einfügen der Unterschrift', e);
+      }
+    }
+    
     doc.line(ML, y, ML + sigW, y);
     y += 5;
     doc.setFont('helvetica', 'normal');
@@ -931,6 +1128,12 @@ function generateAndMailPDF(customRec = null) {
     params.push(`body=${body}`);
     mailtoUrl += params.join('&');
     window.location.href = mailtoUrl;
+
+    setTimeout(() => {
+      if (el.backupModal) {
+        el.backupModal.classList.remove('hidden');
+      }
+    }, 1000);
   }, 1200);
 
   showToast('PDF erstellt – Mail wird geöffnet…', 'success', 3500);
