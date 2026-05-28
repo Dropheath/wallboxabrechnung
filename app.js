@@ -12,6 +12,7 @@ let settings = {
   price:              0.30,
   turnusDay:          23,
   email:              '',
+  emailCc:            '',
   senderName:         'Joannis Nastas',
   senderStreet:       'Birkenstraße 2',
   senderCity:         '67590 Monsheim',
@@ -57,6 +58,7 @@ const el = {
   settingPrice:         document.getElementById('setting-price'),
   settingDay:           document.getElementById('setting-day'),
   settingEmail:         document.getElementById('setting-email'),
+  settingEmailCc:       document.getElementById('setting-email-cc'),
   settingSenderName:    document.getElementById('setting-sender-name'),
   settingSenderStreet:  document.getElementById('setting-sender-street'),
   settingSenderCity:    document.getElementById('setting-sender-city'),
@@ -123,6 +125,7 @@ function openSettings() {
   el.settingPrice.value        = settings.price;
   el.settingDay.value          = settings.turnusDay;
   el.settingEmail.value        = settings.email;
+  el.settingEmailCc.value      = settings.emailCc || '';
   el.settingSenderName.value   = settings.senderName;
   el.settingSenderStreet.value = settings.senderStreet;
   el.settingSenderCity.value   = settings.senderCity;
@@ -143,6 +146,7 @@ function saveSettings() {
   settings.price            = parseFloat(String(el.settingPrice.value).replace(',', '.')) || 0.30;
   settings.turnusDay        = parseInt(el.settingDay.value) || 23;
   settings.email            = el.settingEmail.value.trim();
+  settings.emailCc          = el.settingEmailCc.value.trim();
   settings.senderName       = el.settingSenderName.value.trim();
   settings.senderStreet     = el.settingSenderStreet.value.trim();
   settings.senderCity       = el.settingSenderCity.value.trim();
@@ -833,7 +837,15 @@ function generateAndMailPDF(customRec = null) {
       `Das Beweisfoto (Zählerstand) und alle Details sind im angehängten PDF enthalten.\n\n` +
       `Viele Grüße\n${settings.senderName || ''}`
     );
-    window.location.href = `mailto:${settings.email}?subject=${subject}&body=${body}`;
+    let mailtoUrl = `mailto:${settings.email || ''}?`;
+    const params = [];
+    if (settings.emailCc) {
+      params.push(`cc=${encodeURIComponent(settings.emailCc)}`);
+    }
+    params.push(`subject=${subject}`);
+    params.push(`body=${body}`);
+    mailtoUrl += params.join('&');
+    window.location.href = mailtoUrl;
   }, 1200);
 
   showToast('PDF erstellt – Mail wird geöffnet…', 'success', 3500);
