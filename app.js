@@ -72,6 +72,7 @@ const el = {
   settingTheme:         document.getElementById('setting-theme'),
   historyBtn:           document.getElementById('history-btn'),
   historyModal:         document.getElementById('history-modal'),
+  historySubtitle:      document.getElementById('history-subtitle'),
   closeHistoryBtn:      document.getElementById('close-history-btn'),
   historyList:          document.getElementById('history-list'),
   deleteLastBtn:        document.getElementById('delete-last-btn'),
@@ -194,33 +195,73 @@ function updateStats() {
 function openHistory() {
   renderHistory();
   el.historyModal.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
 }
 
 function closeHistory() {
   el.historyModal.classList.add('hidden');
+  document.body.style.overflow = '';
 }
 
 function renderHistory() {
   const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  
+  // Update subtitle
+  if (el.historySubtitle) {
+    el.historySubtitle.textContent = history.length === 0
+      ? 'Noch keine Einträge'
+      : `${history.length} Abrechnung${history.length !== 1 ? 'en' : ''}`;
+  }
+
   if (history.length === 0) {
-    el.historyList.innerHTML = '<p style="text-align:center; color:var(--text-3); padding:20px;">Noch keine Einträge vorhanden.</p>';
-    el.deleteLastBtn.style.display = 'none';
+    el.historyList.innerHTML = `
+      <div class="history-empty">
+        <span class="history-empty-icon">📂</span>
+        <p class="history-empty-text">Noch keine Abrechnungen vorhanden.</p>
+      </div>`;
+    el.deleteLastBtn.classList.add('hidden');
     return;
   }
-  
-  el.deleteLastBtn.style.display = 'block';
+
+  el.deleteLastBtn.classList.remove('hidden');
+
   el.historyList.innerHTML = history.slice().reverse().map((r, idx) => {
     const realIdx = history.length - 1 - idx;
+    const isLatest = idx === 0;
+    const consumption = r.consumption.toFixed(1).replace('.', ',');
+    const oldReading  = r.oldReading.toFixed(1).replace('.', ',');
+    const newReading  = r.newReading.toFixed(1).replace('.', ',');
+    const priceStr    = r.price.toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+    const totalStr    = r.total.toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+
     return `
-      <div class="history-item">
-        <div class="history-info">
-          <span class="history-date">${r.date}</span>
-          <span class="history-meta">${r.consumption.toFixed(1)} kWh à ${r.price.toFixed(4).replace('.',',')}€</span>
+      <div class="history-card">
+        <div class="history-card-top">
+          <div class="history-card-date">
+            <span class="history-date-text">${r.date}</span>
+            ${isLatest ? '<span class="history-badge-new">Aktuell</span>' : ''}
+          </div>
+          <span class="history-card-amount">${totalStr} €</span>
         </div>
-        <div style="display:flex; align-items:center; gap:12px;">
-          <span class="history-amount">${r.total.toFixed(2).replace('.',',')} €</span>
-          <button class="icon-btn-sm" onclick="downloadPastPDF(${realIdx})" title="PDF laden">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <div class="history-card-body">
+          <div class="history-stat">
+            <span class="history-stat-label">Alt</span>
+            <span class="history-stat-value">${oldReading} kWh</span>
+          </div>
+          <div class="history-stat">
+            <span class="history-stat-label">Neu</span>
+            <span class="history-stat-value accent">${newReading} kWh</span>
+          </div>
+          <div class="history-stat">
+            <span class="history-stat-label">Verbrauch</span>
+            <span class="history-stat-value">${consumption} kWh</span>
+          </div>
+        </div>
+        <div class="history-card-actions">
+          <span class="history-price-note">${priceStr} €/kWh</span>
+          <button class="history-dl-btn" onclick="downloadPastPDF(${realIdx})" title="PDF erstellen &amp; senden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            PDF &amp; Mail
           </button>
         </div>
       </div>
@@ -233,6 +274,46 @@ function downloadPastPDF(idx) {
   if (history[idx]) {
     generateAndMailPDF(history[idx]);
   }
+}
+
+function deleteLastEntry() {
+  if (!confirm('Letzten Eintrag wirklich unwiderruflich löschen?')) return;
+  
+  let history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  if (history.length === 0) return;
+  
+  history.pop();
+  localStorage.setItem('wallbox_history', JSON.stringify(history));
+  
+  // Update state for next scan
+  const lastReading = history.length > 0 ? history[history.length - 1].newReading : 0;
+  localStorage.setItem('wallbox_last_reading', String(lastReading));
+  state.lastReading = lastReading;
+  
+  loadLocalReading();
+  updateStats();
+  updatePdfBtnState();
+  renderHistory();
+  // Auto-export updated CSV so the file stays in sync
+  silentExportCSV();
+  showToast('Eintrag gelöscht – CSV aktualisiert', 'info');
+}
+
+// Silent CSV export: auto-downloads updated CSV without toast (called after delete)
+function silentExportCSV() {
+  const history = JSON.parse(localStorage.getItem('wallbox_history') || '[]');
+  if (!history.length) return;
+  const header = 'Datum;Zaehler Alt (kWh);Zaehler Neu (kWh);Verbrauch (kWh);Preis/kWh (EUR);Summe (EUR)\n';
+  const rows   = history.map(r =>
+    `${r.date};${r.oldReading.toFixed(1)};${r.newReading.toFixed(1)};${r.consumption.toFixed(1)};${r.price.toFixed(4)};${r.total.toFixed(4)}`
+  ).join('\n');
+  const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8;' });
+  const a    = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob),
+    download: `Wallbox_Verlauf_${new Date().toLocaleDateString('de-DE').replace(/\./g,'-')}.csv`
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function exportBackup() {
